@@ -291,12 +291,6 @@ if (UNIX)
     #define CLING_CXX_INCL \"${CLING_CXX_HEADERS}\"
     #define CLING_INCLUDE_PATHS \"${CLING_INCLUDE_PATHS}\"
   ")
-  if (CMAKE_OSX_SYSROOT)
-    file(APPEND ${CMAKE_CURRENT_BINARY_DIR}/cling-compiledata.h.in
-      "
-      #define CLING_OSX_SYSROOT \"${CMAKE_OSX_SYSROOT}\"
-    ")
-  endif()
   if (CLING_CXX_PATH)
     MESSAGE(STATUS "And if not found, will invoke: '${CLING_CXX_PATH}' for them.")
     file(APPEND ${CMAKE_CURRENT_BINARY_DIR}/cling-compiledata.h.in
