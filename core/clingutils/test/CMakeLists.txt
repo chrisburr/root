@@ -26,4 +26,20 @@ if(APPLE)
   set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -w")
 endif()
 
-ROOT_ADD_UNITTEST_DIR(Core RIO ${CLING_LIBRARIES} $<TARGET_OBJECTS:ClingUtils>)
+ROOT_ADD_UNITTEST_DIR(
+  Core
+  RIO
+  ${CLING_LIBRARIES}
+  libclangAnalysis.a
+  libclangDriver.a
+  libclangFrontend.a
+  libclangParse.a
+  libclangSema.a
+  libclangAST.a
+  libclangLex.a
+  libclangSerialization.a
+  libclangCodeGen.a
+  libclangBasic.a
+  libclangEdit.a
+  $<TARGET_OBJECTS:ClingUtils>
+)
