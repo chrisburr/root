@@ -414,7 +414,21 @@ else()
   install(DIRECTORY ${CMAKE_BINARY_DIR}/etc/dictpch DESTINATION ${CMAKE_INSTALL_SYSCONFDIR})
 endif()
 
+
+file(GLOB pcms "*.pcm")
+message(STATUS "CBURR: pcms=${pcms}")
+file(GLOB pcms "*.pcm")
+message(STATUS "CBURR: pcms2=${pcms}")
+file(GLOB pcms "${CMAKE_BINARY_DIR}/lib/*.pcm")
+message(STATUS "CBURR: pcms3=${pcms}")
+
 file(GLOB ${pcms} "*.pcm")
+message(STATUS "CBURR: pcms4=${pcms}")
+file(GLOB ${pcms} "*.pcm")
+message(STATUS "CBURR: pcms5=${pcms}")
+file(GLOB ${pcms} "${CMAKE_BINARY_DIR}/lib/*.pcm")
+message(STATUS "CBURR: pcms6=${pcms}")
+
 install(
    FILES ${pcms}
    DESTINATION ${CMAKE_INSTALL_LIBDIR}
