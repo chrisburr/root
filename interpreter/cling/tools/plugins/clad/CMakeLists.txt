@@ -70,7 +70,7 @@ else()
                -DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}
                -DCMAKE_CXX_FLAGS=${CMAKE_CXX_FLAGS}
                -DCMAKE_INSTALL_PREFIX=${CMAKE_INSTALL_PREFIX}
-               -DClang_DIR=${LLVM_BINARY_DIR}/tools/clang/
+               -DClang_DIR=${LLVM_BINARY_DIR}/lib/cmake/clang/
                -DCLANG_INCLUDE_DIRS=${CLANG_INCLUDE_DIRS}
                -DCLAD_BUILD_STATIC_ONLY=ON
                ${_clad_extra_cmake_args}
