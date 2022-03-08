@@ -35,7 +35,8 @@
 #include <string>
 #include <unordered_set>
 #include <vector>
-
+#include <iostream>
+#include <ostream>
 
 #ifdef LLVM_ON_UNIX
 #include <dlfcn.h>
@@ -1312,6 +1313,7 @@ namespace cling {
       delete m_Dyld;
 
     std::string exeP = GetExecutablePath();
+    std::cout << "exeP = " << exeP << std::endl;
     auto ObjF =
       cantFail(llvm::object::ObjectFile::createObjectFile(exeP));
 
@@ -1346,10 +1348,13 @@ namespace cling {
     // assume we have  defined HAVE_DLFCN_H and HAVE_DLADDR
     Dl_info info;
     if (dladdr((void*)func, &info) == 0) {
+      std::cout << "Not in a known shared library, let's give up" << std::endl;
       // Not in a known shared library, let's give up
       return {};
     } else {
+      std::cout << "info.dli_fname " << info.dli_fname << std::endl;
       std::string result = cached_realpath(info.dli_fname);
+      std::cout << "Before result.empty " << result << std::endl;
       if (!result.empty())
         return result;
 
@@ -1365,16 +1370,21 @@ namespace cling {
 # elif defined(LLVM_ON_UNIX)
       char buf[PATH_MAX] = { 0 };
       // Cross our fingers that /proc/self/exe exists.
-      if (readlink("/proc/self/exe", buf, sizeof(buf)) > 0)
+      if (readlink("/proc/self/exe", buf, sizeof(buf)) > 0) {
+	std::cout << "/proc/self/exe = " << buf << std::endl;
         return cached_realpath(buf);
+      }
       std::string pipeCmd = std::string("which \"") + info.dli_fname + "\"";
       FILE* pipe = popen(pipeCmd.c_str(), "r");
-      if (!pipe)
+      if (!pipe) {
+	std::cout << "Pipe failed" << std::endl;
         return cached_realpath(info.dli_fname);
+      }
       while (fgets(buf, sizeof(buf), pipe))
          result += buf;
 
       pclose(pipe);
+      std::cout << "result = " << result << std::endl;
       return cached_realpath(result);
 # else
 #  error "Unsupported platform."
