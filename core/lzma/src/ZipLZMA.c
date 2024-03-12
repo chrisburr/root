@@ -12,6 +12,7 @@
 #include "ZipLZMA.h"
 #include "lzma.h"
 #include <stdio.h>
+#include <stdlib.h>
 
 static const int kHeaderSize = 9;
 
@@ -44,14 +45,17 @@ void R__zipLZMA(int cxlevel, int *srcsize, char *src, int *tgtsize, char *tgt, i
       return;
    }
 
-   if (LZMA_DICT_SIZE_MIN > dict_size_est) {
-      dict_size_est = LZMA_DICT_SIZE_MIN;
-   }
-   if (opt_lzma2.dict_size > dict_size_est) {
-      /* reduce the dictionary size if larger than 1/4 the input size, preset
-         dictionaries size can be expensively large
-       */
-      opt_lzma2.dict_size = dict_size_est;
+   // Check if NO_SET_DICT_SIZE environment variable is not set
+   if (getenv("NO_SET_DICT_SIZE") == NULL) {
+      if (LZMA_DICT_SIZE_MIN > dict_size_est) {
+         dict_size_est = LZMA_DICT_SIZE_MIN;
+      }
+      if (opt_lzma2.dict_size > dict_size_est) {
+         /* reduce the dictionary size if larger than 1/4 the input size, preset
+            dictionaries size can be expensively large
+         */
+         opt_lzma2.dict_size = dict_size_est;
+      }
    }
 
    returnStatus = lzma_stream_encoder(&stream,
