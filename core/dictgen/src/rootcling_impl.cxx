@@ -4331,11 +4331,7 @@ int RootClingMain(int argc,
          remove((moduleCachePath + llvm::sys::path::get_separator() + "services.pcm").str().c_str());
 #endif
 
-#ifdef R__MACOSX
-         remove((moduleCachePath + llvm::sys::path::get_separator() + "Darwin.pcm").str().c_str());
-#else
          remove((moduleCachePath + llvm::sys::path::get_separator() + "libc.pcm").str().c_str());
-#endif
          remove((moduleCachePath + llvm::sys::path::get_separator() + "std.pcm").str().c_str());
          remove((moduleCachePath + llvm::sys::path::get_separator() + "boost.pcm").str().c_str());
          remove((moduleCachePath + llvm::sys::path::get_separator() + "tinyxml2.pcm").str().c_str());

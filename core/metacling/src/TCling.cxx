@@ -1231,11 +1231,7 @@ static void RegisterCxxModules(cling::Interpreter &clingInterp)
    LoadModule("services", clingInterp);
 #endif
 
-#ifdef R__MACOSX
-   LoadModule("Darwin", clingInterp);
-#else
    LoadModule("libc", clingInterp);
-#endif
    LoadModule("std", clingInterp);
 
    LoadModule("_Builtin_intrinsics", clingInterp);

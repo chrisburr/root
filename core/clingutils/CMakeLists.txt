@@ -153,10 +153,10 @@ if (runtime_cxxmodules)
       set(custom_modulemaps ${custom_modulemaps} std.modulemap)
     endif()
   endif()
-  # Handle libc. Apple's libc is modularized.
+  # Handle libc.
   if (MSVC)
     set(custom_modulemaps ${custom_modulemaps} libc_msvc.modulemap)
-  elseif (NOT APPLE)
+  else()
     set(custom_modulemaps ${custom_modulemaps} libc.modulemap)
   endif()
 endif(runtime_cxxmodules)

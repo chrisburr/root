@@ -699,11 +699,6 @@ namespace {
       llvm::SmallString<512> clingModuleMap(clingIncLoc);
       llvm::sys::path::append(clingModuleMap, "module.modulemap");
       ModuleMapFiles.push_back(clingModuleMap.str().str());
-      if (Triple.isMacOSX()) {
-        llvm::SmallString<512> libcModuleMap(cIncLoc);
-        llvm::sys::path::append(libcModuleMap, "module.modulemap");
-        ModuleMapFiles.push_back(libcModuleMap.str().str());
-      }
     }
 
     std::string MOverlay;
@@ -728,6 +723,10 @@ namespace {
                             /*RegisterModuleMap=*/ true,
                             /*AllowModulemapOverride=*/ false);
 #elif __APPLE__
+    maybeAppendOverlayEntry(cIncLoc.str(), "libc.modulemap",
+                            clingIncLoc.str().str(), MOverlay,
+                            /*RegisterModuleMap=*/ true,
+                            /*AllowModulemapOverride=*/false);
     if (Triple.isMacOSX()) {
       if (CI.getTarget().getSDKVersion() < VersionTuple(14, 4)) {
         maybeAppendOverlayEntry(stdIncLoc.str(),
