@@ -142,6 +142,7 @@ public:
 
    void CommitSuppressedColumn(ColumnHandle_t columnHandle) final;
    void CommitPage(ColumnHandle_t columnHandle, const RPage &page) final;
+   void CommitConstantPage(ColumnHandle_t columnHandle, const void *from, std::size_t nElements) final;
    void CommitSealedPage(ROOT::DescriptorId_t physicalColumnId, const RSealedPage &sealedPage) final;
    void CommitSealedPageV(std::span<RPageStorage::RSealedPageGroup> ranges) final;
    std::uint64_t CommitCluster(ROOT::NTupleSize_t nNewEntries) final;

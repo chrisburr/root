@@ -19,6 +19,7 @@
 #include <ROOT/RPageSinkBuf.hxx>
 
 #include <algorithm>
+#include <limits>
 #include <memory>
 
 using ROOT::Experimental::Detail::RNTupleAtomicCounter;
@@ -154,8 +155,33 @@ void ROOT::Internal::RPageSinkBuf::CommitSuppressedColumn(ColumnHandle_t columnH
    fSuppressedColumns.emplace_back(columnHandle);
 }
 
+void ROOT::Internal::RPageSinkBuf::CommitConstantPage(ColumnHandle_t columnHandle, const void *from,
+                                                      std::size_t nElements)
+{
+   R__ASSERT(GetWriteOptions().GetEnableConstantPages());
+   R__ASSERT(nElements <= std::numeric_limits<std::uint32_t>::max());
+   auto colId = columnHandle.fPhysicalId;
+   const auto &element = *columnHandle.fColumn->GetElement();
+
+   // Buffered like any other page so that the page order of the column is preserved; it is already "sealed":
+   // the buffer holds the packed value of one element.
+   auto &zipItem = fBufferedColumns.at(colId).BufferPage(columnHandle);
+   auto &sealedPage = fBufferedColumns.at(colId).RegisterSealedPage();
+   const auto nBytes = element.GetPackedSize(1);
+   zipItem.fBuf = MakeUninitArray<unsigned char>(sizeof(std::uint64_t));
+   element.Pack(zipItem.fBuf.get(), from, 1);
+   sealedPage = RSealedPage(zipItem.fBuf.get(), nBytes, nElements, false /* hasChecksum */);
+   sealedPage.SetIsConstant(true);
+   zipItem.fSealedPage = &sealedPage;
+}
+
 void ROOT::Internal::RPageSinkBuf::CommitPage(ColumnHandle_t columnHandle, const RPage &page)
 {
+   if (GetWriteOptions().GetEnableConstantPages() && IsConstantPage(page)) {
+      CommitConstantPage(columnHandle, page.GetBuffer(), page.GetNElements());
+      return;
+   }
+
    auto colId = columnHandle.fPhysicalId;
    const auto &element = *columnHandle.fColumn->GetElement();
 

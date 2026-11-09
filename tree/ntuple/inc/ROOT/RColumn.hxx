@@ -22,6 +22,7 @@
 #include <TError.h>
 
 #include <cstring> // for memcpy
+#include <limits>
 #include <memory>
 #include <utility>
 
@@ -156,8 +157,24 @@ public:
    }
 
    /// Append `count` copies of the element pointed to by `from`
+   /// PROTOTYPE: runs of at least this many repeated elements are committed as a constant page (if enabled)
+   static constexpr std::size_t kMinConstantPageElements = 256;
+
    void AppendRepeated(const void *from, std::size_t count)
    {
+      if (count >= kMinConstantPageElements && fPageSink->GetWriteOptions().GetEnableConstantPages()) {
+         // Commit what is buffered so far, then the run as a single constant page without materializing it
+         Flush();
+         while (count > 0) {
+            const std::size_t n = std::min<std::size_t>(count, std::numeric_limits<std::uint32_t>::max());
+            fPageSink->CommitConstantPage(fHandleSink, from, n);
+            fNElements += n;
+            count -= n;
+         }
+         fWritePage.Reset(fNElements);
+         return;
+      }
+
       const auto elemSize = fElement->GetSize();
       while (count > 0) {
          std::size_t nElementsRemaining = fWritePage.GetMaxElements() - fWritePage.GetNElements();
@@ -170,8 +187,14 @@ public:
          auto nBatch = std::min(count, nElementsRemaining);
 
          auto dst = static_cast<unsigned char *>(fWritePage.GrowUnchecked(nBatch));
-         for (std::size_t i = 0; i < nBatch; ++i, dst += elemSize)
-            std::memcpy(dst, from, elemSize);
+         // Fill by doubling the filled range
+         std::memcpy(dst, from, elemSize);
+         std::size_t nFilled = 1;
+         while (nFilled < nBatch) {
+            const auto n = std::min(nFilled, nBatch - nFilled);
+            std::memcpy(dst + nFilled * elemSize, dst, n * elemSize);
+            nFilled += n;
+         }
          count -= nBatch;
          fNElements += nBatch;
       }

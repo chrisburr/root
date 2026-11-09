@@ -38,6 +38,7 @@
 #include <atomic>
 #include <cassert>
 #include <cstring>
+#include <limits>
 #include <functional>
 #include <memory>
 #include <string_view>
@@ -770,7 +771,9 @@ void ROOT::Internal::RPageSource::PrepareLoadCluster(
       const auto &pageRange = clusterDesc.GetPageRange(physicalColumnId);
       ROOT::NTupleSize_t pageNo = 0;
       for (const auto &pageInfo : pageRange.GetPageInfos()) {
-         if (pageInfo.GetLocator().GetType() == RNTupleLocator::kTypePageZero) {
+         if (pageInfo.GetLocator().GetType() == RNTupleLocator::kTypeConstant) {
+            // Nothing to load: constant pages are synthesized from their locator in LoadPageFromSummary()
+         } else if (pageInfo.GetLocator().GetType() == RNTupleLocator::kTypePageZero) {
             pageZeroMap.Register(ROnDiskPage::Key{physicalColumnId, pageNo},
                                  ROnDiskPage(const_cast<void *>(ROOT::Internal::RPage::GetPageZeroBuffer()),
                                              pageInfo.GetLocator().GetNBytesOnStorage()));
@@ -832,6 +835,8 @@ void ROOT::Internal::RPageSource::LoadSealedPage(ROOT::DescriptorId_t physicalCo
    }
 
    assert(pageInfo.GetLocator().GetType() != RNTupleLocator::kTypePageZero);
+   if (pageInfo.GetLocator().GetType() == RNTupleLocator::kTypeConstant)
+      throw RException(R__FAIL("loading constant pages as sealed pages is not supported"));
 
    sealedPage.SetBufferSize(pageInfo.GetLocator().GetNBytesOnStorage() + pageInfo.HasChecksum() * kNBytesPageChecksum);
    sealedPage.SetNElements(pageInfo.GetNElements());
@@ -863,12 +868,44 @@ ROOT::Internal::RPageSource::LoadZeroPage(ColumnHandle_t columnHandle, const RPa
 }
 
 ROOT::Internal::RPageRef
+ROOT::Internal::RPageSource::LoadConstantPage(ColumnHandle_t columnHandle, const RPageSummary &pageSummary)
+{
+   const auto &pageInfo = pageSummary.fPageInfo;
+   assert(pageInfo.GetLocator().GetType() == RNTupleLocator::kTypeConstant);
+
+   const auto element = columnHandle.fColumn->GetElement();
+   const auto elementSize = element->GetSize();
+   const auto elementInMemoryType = element->GetIdentifier().fInMemoryType;
+   const auto nElements = pageInfo.GetNElements();
+
+   auto page = fPageAllocator->NewPage(elementSize, nElements);
+   page.GrowUnchecked(nElements);
+   if (nElements > 0) {
+      const std::uint64_t packed = pageInfo.GetLocator().GetPosition<std::uint64_t>();
+      auto *buf = static_cast<unsigned char *>(page.GetBuffer());
+      element->Unpack(buf, &packed, 1);
+      // Replicate the first element by doubling the filled range
+      std::size_t nFilled = 1;
+      while (nFilled < nElements) {
+         const auto n = std::min<std::size_t>(nFilled, nElements - nFilled);
+         std::memcpy(buf + nFilled * elementSize, buf, n * elementSize);
+         nFilled += n;
+      }
+   }
+   page.SetWindow(pageSummary.fColumnOffset + pageInfo.GetFirstElementIndex(),
+                  RPage::RClusterInfo(pageSummary.fClusterId, pageSummary.fColumnOffset));
+   return fPagePool.RegisterPage(std::move(page), RPagePool::RKey{columnHandle.fPhysicalId, elementInMemoryType});
+}
+
+ROOT::Internal::RPageRef
 ROOT::Internal::RPageSource::LoadPageFromSummary(ColumnHandle_t columnHandle, const RPageSummary &pageSummary)
 {
    if (pageSummary.fPageInfo.GetLocator().GetType() == RNTupleLocator::kTypeUnknown) {
       throw RException(R__FAIL("tried to read a page with an unknown locator"));
    } else if (pageSummary.fPageInfo.GetLocator().GetType() == RNTupleLocator::kTypePageZero) {
       return LoadZeroPage(columnHandle, pageSummary);
+   } else if (pageSummary.fPageInfo.GetLocator().GetType() == RNTupleLocator::kTypeConstant) {
+      return LoadConstantPage(columnHandle, pageSummary);
    }
 
    const auto &columnId = columnHandle.fPhysicalId;
@@ -1238,6 +1275,34 @@ ROOT::Internal::RPageSink::RPageSink(std::string_view name, const ROOT::RNTupleW
 
 ROOT::Internal::RPageSink::~RPageSink() {}
 
+void ROOT::Internal::RPageSink::CommitConstantPage(ColumnHandle_t /*columnHandle*/, const void * /*from*/,
+                                                   std::size_t /*nElements*/)
+{
+   throw RException(R__FAIL("this page sink does not support constant pages"));
+}
+
+bool ROOT::Internal::RPageSink::IsConstantPage(const ROOT::Internal::RPage &page)
+{
+   if (page.GetNElements() < 2)
+      return false;
+   // All elements are equal if the buffer equals itself shifted by one element
+   const auto *buf = static_cast<const unsigned char *>(page.GetBuffer());
+   const auto elemSize = page.GetElementSize();
+   return std::memcmp(buf, buf + elemSize, page.GetNBytes() - elemSize) == 0;
+}
+
+ROOT::RNTupleLocator ROOT::Internal::RPageSink::MakeConstantPageLocator(const void *packedValue, std::size_t nBytes)
+{
+   R__ASSERT(nBytes <= sizeof(std::uint64_t));
+   std::uint64_t value = 0;
+   std::memcpy(&value, packedValue, nBytes);
+   RNTupleLocator locator;
+   locator.SetType(RNTupleLocator::kTypeConstant);
+   locator.SetNBytesOnStorage(0);
+   locator.SetPosition(value);
+   return locator;
+}
+
 ROOT::Internal::RPageStorage::RSealedPage ROOT::Internal::RPageSink::SealPage(const RSealPageConfig &config)
 {
    assert(config.fPage);
@@ -1500,6 +1565,9 @@ void ROOT::Internal::RPagePersistentSink::InitImpl(ROOT::RNTupleModel &model)
       initialChangeset.fAddedProjectedFields.emplace_back(f);
    UpdateSchema(initialChangeset, 0U);
 
+   if (GetWriteOptions().GetEnableConstantPages())
+      fDescriptorBuilder.SetFeature(RNTupleDescriptor::kFeatureFlag_ConstantPages);
+
    fSerializationContext = RNTupleSerializer::SerializeHeader(nullptr, descriptor).Unwrap();
    auto buffer = MakeUninitArray<unsigned char>(fSerializationContext.GetHeaderSize());
    fSerializationContext = RNTupleSerializer::SerializeHeader(buffer.get(), descriptor).Unwrap();
@@ -1692,6 +1760,11 @@ void ROOT::Internal::RPagePersistentSink::CommitSuppressedColumn(ColumnHandle_t 
 
 void ROOT::Internal::RPagePersistentSink::CommitPage(ColumnHandle_t columnHandle, const ROOT::Internal::RPage &page)
 {
+   if (GetWriteOptions().GetEnableConstantPages() && IsConstantPage(page)) {
+      CommitConstantPage(columnHandle, page.GetBuffer(), page.GetNElements());
+      return;
+   }
+
    fOpenColumnRanges.at(columnHandle.fPhysicalId).IncrementNElements(page.GetNElements());
 
    auto element = columnHandle.fColumn->GetElement();
@@ -1709,6 +1782,24 @@ void ROOT::Internal::RPagePersistentSink::CommitPage(ColumnHandle_t columnHandle
    fOpenPageRanges.at(columnHandle.fPhysicalId).GetPageInfos().emplace_back(pageInfo);
 }
 
+void ROOT::Internal::RPagePersistentSink::CommitConstantPage(ColumnHandle_t columnHandle, const void *from,
+                                                             std::size_t nElements)
+{
+   R__ASSERT(GetWriteOptions().GetEnableConstantPages());
+   R__ASSERT(nElements <= std::numeric_limits<std::uint32_t>::max());
+   fOpenColumnRanges.at(columnHandle.fPhysicalId).IncrementNElements(nElements);
+
+   const auto element = columnHandle.fColumn->GetElement();
+   unsigned char packed[sizeof(std::uint64_t)] = {};
+   element->Pack(packed, from, 1);
+
+   ROOT::RClusterDescriptor::RPageInfo pageInfo;
+   pageInfo.SetNElements(nElements);
+   pageInfo.SetLocator(MakeConstantPageLocator(packed, element->GetPackedSize(1)));
+   pageInfo.SetHasChecksum(false);
+   fOpenPageRanges.at(columnHandle.fPhysicalId).GetPageInfos().emplace_back(pageInfo);
+}
+
 void ROOT::Internal::RPagePersistentSink::CommitSealedPage(ROOT::DescriptorId_t physicalColumnId,
                                                            const RPageStorage::RSealedPage &sealedPage)
 {
@@ -1716,7 +1807,10 @@ void ROOT::Internal::RPagePersistentSink::CommitSealedPage(ROOT::DescriptorId_t 
 
    ROOT::RClusterDescriptor::RPageInfo pageInfo;
    pageInfo.SetNElements(sealedPage.GetNElements());
-   pageInfo.SetLocator(CommitSealedPageImpl(physicalColumnId, sealedPage));
+   if (sealedPage.GetIsConstant())
+      pageInfo.SetLocator(MakeConstantPageLocator(sealedPage.GetBuffer(), sealedPage.GetDataSize()));
+   else
+      pageInfo.SetLocator(CommitSealedPageImpl(physicalColumnId, sealedPage));
    pageInfo.SetHasChecksum(sealedPage.GetHasChecksum());
    fOpenPageRanges.at(physicalColumnId).GetPageInfos().emplace_back(pageInfo);
 }
@@ -1758,6 +1852,12 @@ void ROOT::Internal::RPagePersistentSink::CommitSealedPageV(std::span<RPageStora
       locatorIndexes.reserve(locatorIndexes.size() + rangeSize);
 
       for (auto sealedPageIt = range.fFirst; sealedPageIt != range.fLast; ++sealedPageIt) {
+         if (sealedPageIt->GetIsConstant()) {
+            // Not written to storage; the locator is constructed below
+            mask.emplace_back(false);
+            locatorIndexes.emplace_back(std::numeric_limits<std::size_t>::max());
+            continue;
+         }
          if (!fFeatures.fCanMergePages || !fOptions->GetEnableSamePageMerging()) {
             mask.emplace_back(true);
             locatorIndexes.emplace_back(iLocator++);
@@ -1800,7 +1900,12 @@ void ROOT::Internal::RPagePersistentSink::CommitSealedPageV(std::span<RPageStora
 
          ROOT::RClusterDescriptor::RPageInfo pageInfo;
          pageInfo.SetNElements(sealedPageIt->GetNElements());
-         pageInfo.SetLocator(locators[locatorIndexes[i++]]);
+         if (sealedPageIt->GetIsConstant()) {
+            pageInfo.SetLocator(MakeConstantPageLocator(sealedPageIt->GetBuffer(), sealedPageIt->GetDataSize()));
+            i++;
+         } else {
+            pageInfo.SetLocator(locators[locatorIndexes[i++]]);
+         }
          pageInfo.SetHasChecksum(sealedPageIt->GetHasChecksum());
          fOpenPageRanges.at(range.fPhysicalColumnId).GetPageInfos().emplace_back(pageInfo);
       }

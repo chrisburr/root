@@ -1148,6 +1148,11 @@ ROOT::Internal::RNTupleSerializer::SerializeLocator(const RNTupleLocator &locato
       size += SerializeLocatorPayloadMulti(locator, payloadp);
       locatorType = 0x03;
       break;
+   case RNTupleLocator::kTypeConstant:
+      // The payload is the packed value of one element, padded to 64 bits
+      size += SerializeUInt64(locator.GetPosition<std::uint64_t>(), payloadp);
+      locatorType = 0x04;
+      break;
    default:
       if (locator.GetType() == ROOT::Internal::kTestLocatorType) {
          // For the testing locator, use the same payload format as Object64. We won't read it back anyway.
@@ -1204,6 +1209,16 @@ ROOT::RResult<std::uint32_t> ROOT::Internal::RNTupleSerializer::DeserializeLocat
          auto res = DeserializeLocatorPayloadMulti(bytes, payloadSize, locator);
          if (!res)
             return R__FORWARD_ERROR(res);
+         break;
+      }
+      case 0x04: {
+         if (payloadSize < sizeof(std::uint64_t))
+            return R__FAIL("too short constant page locator");
+         std::uint64_t value;
+         DeserializeUInt64(bytes, value);
+         locator.SetType(RNTupleLocator::kTypeConstant);
+         locator.SetNBytesOnStorage(0);
+         locator.SetPosition(value);
          break;
       }
       default: locator.SetType(RNTupleLocator::kTypeUnknown);

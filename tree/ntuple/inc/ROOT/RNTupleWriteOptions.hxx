@@ -216,6 +216,8 @@ protected:
    EImplicitMT fUseImplicitMT = EImplicitMT::kDefault;
    bool fEnablePageChecksums = true;
    bool fEnableSamePageMerging = true;
+   /// PROTOTYPE: see SetEnableConstantPages()
+   bool fEnableConstantPages = false;
    /// Specifies the max size of a payload storeable into a single TKey. When writing an RNTuple to a ROOT file,
    /// any payload whose size exceeds this will be split into multiple keys.
    std::uint64_t fMaxKeySize = kDefaultMaxKeySize;
@@ -273,6 +275,11 @@ public:
    }
 
    bool GetEnableSamePageMerging() const { return fEnableSamePageMerging; }
+
+   /// PROTOTYPE: store pages whose elements all have the same value as a constant-page locator without payload.
+   /// Files written with this option need a reader that supports RNTupleDescriptor::kFeatureFlag_ConstantPages.
+   bool GetEnableConstantPages() const { return fEnableConstantPages; }
+   void SetEnableConstantPages(bool val) { fEnableConstantPages = val; }
    void SetEnableSamePageMerging(bool val);
 
    std::uint64_t GetMaxKeySize() const { return fMaxKeySize; }
@@ -286,7 +293,8 @@ public:
              lhs.fUseBufferedWrite == rhs.fUseBufferedWrite && lhs.fUseDirectIO == rhs.fUseDirectIO &&
              lhs.fWriteBufferSize == rhs.fWriteBufferSize && lhs.fUseImplicitMT == rhs.fUseImplicitMT &&
              lhs.fEnablePageChecksums == rhs.fEnablePageChecksums &&
-             lhs.fEnableSamePageMerging == rhs.fEnableSamePageMerging && lhs.fMaxKeySize == rhs.fMaxKeySize;
+             lhs.fEnableSamePageMerging == rhs.fEnableSamePageMerging && lhs.fMaxKeySize == rhs.fMaxKeySize &&
+             lhs.fEnableConstantPages == rhs.fEnableConstantPages;
    }
 
    friend bool operator!=(const RNTupleWriteOptions &lhs, const RNTupleWriteOptions &rhs) { return !(lhs == rhs); }

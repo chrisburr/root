@@ -93,6 +93,8 @@ public:
       std::size_t fBufferSize = 0; ///< Size of the page payload and the trailing checksum (if available)
       std::uint32_t fNElements = 0;
       bool fHasChecksum = false; ///< If set, the last 8 bytes of the buffer are the xxhash of the rest of the buffer
+      /// PROTOTYPE: if set, the buffer holds the packed value of a single element that is repeated fNElements times
+      bool fIsConstant = false;
 
    public:
       RSealedPage() = default;
@@ -121,6 +123,9 @@ public:
 
       bool GetHasChecksum() const { return fHasChecksum; }
       void SetHasChecksum(bool hasChecksum) { fHasChecksum = hasChecksum; }
+
+      bool GetIsConstant() const { return fIsConstant; }
+      void SetIsConstant(bool isConstant) { fIsConstant = isConstant; }
 
       void ChecksumIfEnabled();
       RResult<void> VerifyChecksumIfEnabled() const;
@@ -364,6 +369,13 @@ public:
    virtual void CommitSuppressedColumn(ColumnHandle_t columnHandle) = 0;
    /// Write a page to the storage. The column must have been added before.
    virtual void CommitPage(ColumnHandle_t columnHandle, const ROOT::Internal::RPage &page) = 0;
+   /// PROTOTYPE: commit a page of `nElements` copies of the in-memory value at `from` as a constant page, without
+   /// materializing it. Only valid if RNTupleWriteOptions::GetEnableConstantPages() is set.
+   virtual void CommitConstantPage(ColumnHandle_t columnHandle, const void *from, std::size_t nElements);
+   /// PROTOTYPE: whether all elements of the page have the same value (and the page has more than one element)
+   static bool IsConstantPage(const ROOT::Internal::RPage &page);
+   /// PROTOTYPE: the locator of a constant page given the packed value of its element
+   static RNTupleLocator MakeConstantPageLocator(const void *packedValue, std::size_t nBytes);
    /// Write a preprocessed page to storage. The column must have been added before.
    virtual void
    CommitSealedPage(ROOT::DescriptorId_t physicalColumnId, const RPageStorage::RSealedPage &sealedPage) = 0;
@@ -577,6 +589,7 @@ public:
 
    void CommitSuppressedColumn(ColumnHandle_t columnHandle) final;
    void CommitPage(ColumnHandle_t columnHandle, const ROOT::Internal::RPage &page) final;
+   void CommitConstantPage(ColumnHandle_t columnHandle, const void *from, std::size_t nElements) final;
    void CommitSealedPage(ROOT::DescriptorId_t physicalColumnId, const RPageStorage::RSealedPage &sealedPage) final;
    void CommitSealedPageV(std::span<RPageStorage::RSealedPageGroup> ranges) final;
    RStagedCluster StageCluster(ROOT::NTupleSize_t nNewEntries) final;
@@ -839,6 +852,8 @@ private:
    void LoadPageList(DescriptorId_t clusterGroupId, const RExclDescriptorGuard &exclGuard);
    // Common treatment of zero pages in LoadPageFromSummary()
    ROOT::Internal::RPageRef LoadZeroPage(ColumnHandle_t columnHandle, const RPageSummary &pageSummary);
+   /// PROTOTYPE: synthesize a page from a constant-page locator
+   ROOT::Internal::RPageRef LoadConstantPage(ColumnHandle_t columnHandle, const RPageSummary &pageSummary);
    // Once the page is found to be missing in the page cache and all information about the page is collected,
    // either using a global or a local element index, perform the common page loading tasks using the page summary.
    // This includes zero page handling and prefetching the corresponding cluster.

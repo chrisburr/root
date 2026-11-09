@@ -786,6 +786,9 @@ public:
       /// in the first ntuple and by Real32 in the second.
       /// Added in version 1.1.0.0 of the binary format.
       kFeatureFlag_NestedDeferredColumns = 0,
+      /// PROTOTYPE: pages may use constant-page locators (RNTupleLocator::kTypeConstant), which have no storage
+      /// of their own and stand for a page whose elements all have the same value.
+      kFeatureFlag_ConstantPages = 1,
       // Insert new feature flags here, with contiguous values. If at any point a "hole" appears in the valid feature
       // flags values, the check in RNTupleSerialize must be updated.
 

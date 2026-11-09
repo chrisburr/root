@@ -268,6 +268,9 @@ public:
       // The following locators are experimental and are not defined in the binary format specification.
       kTypeObject64 = 0x02,
       kTypeMulti = 0x03,
+      // PROTOTYPE: a page whose elements all have the same value; the payload is the packed value of one element
+      // and the page has no storage of its own (see RNTupleDescriptor::kFeatureFlag_ConstantPages).
+      kTypeConstant = 0x04,
 
       kLastSerializableType = 0x7f,
       kTypePageZero = kLastSerializableType + 1,

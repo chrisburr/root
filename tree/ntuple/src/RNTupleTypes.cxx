@@ -46,6 +46,7 @@ ROOT::RNTupleLocator::ELocatorType ROOT::RNTupleLocator::GetType() const
    case 3: return kTypePageZero;
    case 4: return kTypeUnknown;
    case 5: return Internal::kTestLocatorType;
+   case 6: return kTypeConstant;
    default: break;
    }
    R__ASSERT(false);
@@ -61,6 +62,7 @@ void ROOT::RNTupleLocator::SetType(ELocatorType type)
    case kTypeMulti: compactType = 2; break;
    case kTypePageZero: compactType = 3; break;
    case kTypeUnknown: compactType = 4; break;
+   case kTypeConstant: compactType = 6; break;
    default:
       if (type == Internal::kTestLocatorType)
          compactType = 5;
@@ -73,7 +75,8 @@ void ROOT::RNTupleLocator::SetType(ELocatorType type)
 
 void ROOT::RNTupleLocator::SetPosition(std::uint64_t position)
 {
-   if (GetType() != kTypeFile)
+   // A constant-page locator stores the packed element value in place of the offset
+   if (GetType() != kTypeFile && GetType() != kTypeConstant)
       throw RException(R__FAIL("cannot set position as 64bit offset for type " + std::to_string(GetType())));
    fPosition = position;
 }
@@ -94,7 +97,7 @@ void ROOT::RNTupleLocator::SetPosition(RNTupleLocatorMulti position)
 
 std::uint64_t ROOT::Internal::RNTupleLocatorHelper<std::uint64_t>::Get(const RNTupleLocator &loc)
 {
-   if (loc.GetType() != ROOT::RNTupleLocator::kTypeFile)
+   if (loc.GetType() != ROOT::RNTupleLocator::kTypeFile && loc.GetType() != ROOT::RNTupleLocator::kTypeConstant)
       throw RException(R__FAIL("cannot retrieve position as 64bit offset for type " + std::to_string(loc.GetType())));
    return loc.fPosition;
 }
