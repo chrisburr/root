@@ -651,6 +651,47 @@ TEST(MiniFile, MultiKeyBlob_TooManyChunks)
    }
 }
 
+TEST(MiniFile, ReserveBlobLargeObjLen)
+{
+   // A batch of highly compressible pages is small on disk but its uncompressed size can exceed what fits into the
+   // 32 bit object length of the key header. Reserving such a blob must not fail.
+   FileRaii fileGuardSimple("test_ntuple_minifile_reserve_blob_large_objlen_simple.root");
+   FileRaii fileGuardProper("test_ntuple_minifile_reserve_blob_large_objlen_proper.root");
+
+   constexpr std::size_t kBlobSize = 16;
+   constexpr std::size_t kObjLen = std::size_t(std::numeric_limits<std::uint32_t>::max()) + 1;
+   unsigned char data[kBlobSize];
+   memset(data, 0x42, kBlobSize);
+
+   auto writeAndCheck = [&](RNTupleFileWriter &writer, const std::string &path) {
+      const auto offReserved = writer.ReserveBlob(kBlobSize, kObjLen);
+      writer.WriteIntoReservedBlob(data, kBlobSize, offReserved);
+      const auto offWritten = writer.WriteBlob(data, kBlobSize, kObjLen);
+      writer.Commit();
+
+      auto rawFile = RRawFile::Create(path);
+      RMiniFileReader reader(rawFile.get());
+      unsigned char buf[kBlobSize];
+      for (auto offset : {offReserved, offWritten}) {
+         memset(buf, 0, kBlobSize);
+         reader.ReadBuffer(buf, kBlobSize, offset);
+         EXPECT_EQ(0, memcmp(data, buf, kBlobSize));
+      }
+   };
+
+   {
+      auto writer = RNTupleFileWriter::Recreate("ntpl", fileGuardSimple.GetPath(), EContainerFormat::kTFile,
+                                                RNTupleWriteOptions());
+      writeAndCheck(*writer, fileGuardSimple.GetPath());
+   }
+   {
+      std::unique_ptr<TFile> file(TFile::Open(fileGuardProper.GetPath().c_str(), "RECREATE"));
+      auto writer = RNTupleFileWriter::Append("ntpl", *file, RNTupleWriteOptions::kDefaultMaxKeySize,
+                                              /*isAttributesRNTuple=*/false);
+      writeAndCheck(*writer, fileGuardProper.GetPath());
+   }
+}
+
 TEST(MiniFile, Multi)
 {
    FileRaii fileGuard("test_ntuple_minifile_multi.root");

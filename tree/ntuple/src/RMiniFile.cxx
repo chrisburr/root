@@ -1462,10 +1462,6 @@ std::uint64_t ROOT::Internal::RNTupleFileWriter::WriteBlob(const void *data, siz
 
    const std::uint64_t maxKeySize = fNTupleAnchor.fMaxKeySize;
    R__ASSERT(maxKeySize > 0);
-   // We don't need the object length except for seeing compression ratios in TFile::Map()
-   // Make sure that the on-disk object length fits into the TKey header.
-   if (static_cast<std::uint64_t>(len) > static_cast<std::uint64_t>(std::numeric_limits<std::uint32_t>::max()))
-      len = nbytes;
 
    if (nbytes <= maxKeySize) {
       // Fast path: only write 1 key.
@@ -1522,6 +1518,11 @@ ROOT::Internal::RNTupleFileWriter::ReserveBlob(size_t nbytes, size_t len, unsign
 {
    // ReserveBlob cannot be used to reserve a multi-key blob
    R__ASSERT(nbytes <= fNTupleAnchor.GetMaxKeySize());
+   // We don't need the object length except for seeing compression ratios in TFile::Map()
+   // Make sure that the on-disk object length fits into the TKey header. This matters in particular for batches of
+   // highly compressible pages: their size on disk is bounded by the max key size, their uncompressed size is not.
+   if (static_cast<std::uint64_t>(len) > static_cast<std::uint64_t>(std::numeric_limits<std::uint32_t>::max()))
+      len = nbytes;
 
    std::uint64_t offset;
    if (auto *fileSimple = std::get_if<RImplSimple>(&fFile)) {
