@@ -39,6 +39,7 @@ namespace ROOT {
 class REntry;
 class RFieldBase;
 class RClassField;
+class RNTupleFillContext;
 
 namespace Detail {
 class RFieldVisitor;
@@ -85,6 +86,7 @@ This is and can only be partially enforced through C++.
 class RFieldBase {
    friend class RFieldZero;                                    // to reset fParent pointer in ReleaseSubfields()
    friend class ROOT::Detail::RRawPtrWriteEntry;               // to call Append()
+   friend class ROOT::RNTupleFillContext;                      // to call AppendEmpty() for sparse filling
    friend class ROOT::RNTupleAttrSetReader;      // for field->Read() in LoadEntry()
    friend struct ROOT::Internal::RFieldCallbackInjector;       // used for unit tests
    friend struct ROOT::Internal::RFieldRepresentationModifier; // used for unit tests
@@ -450,6 +452,12 @@ protected:
    /// Write the given value into columns. The value object has to be of the same type as the field.
    /// Returns the number of uncompressed bytes written.
    std::size_t Append(const void *from);
+
+   /// Fields that have a cheap representation of an "empty" value (e.g. an empty collection) can append `n` such
+   /// values in bulk without a value object. Used for sparse filling. The default implementation throws.
+   virtual std::size_t AppendEmptyImpl(std::size_t n);
+   /// Whether AppendEmptyImpl() is supported
+   virtual bool SupportsAppendEmpty() const { return false; }
 
    /// Populate a single value with data from the field. The memory location pointed to by to needs to be of the
    /// fitting type. The fast path is conditioned by the field qualifying as simple, i.e. maps as-is

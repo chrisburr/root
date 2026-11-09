@@ -991,3 +991,74 @@ TEST(RNTuple, ForbiddenCharactersInModelField)
       }
    }
 }
+
+TEST(RNTuple, FillSparse)
+{
+   FileRaii fileGuard("test_ntuple_fill_sparse.root");
+
+   constexpr int kNVectors = 50;
+   constexpr int kNEntries = 3000;
+
+   // Deterministic choice of which fields are filled in which entry
+   auto isFilled = [](int entry, int field) { return ((entry * 7919 + field * 104729) % 13) < 2; };
+
+   {
+      auto model = RNTupleModel::Create();
+      auto evt = model->MakeField<int>("evt");
+      std::vector<std::shared_ptr<std::vector<float>>> vecs;
+      for (int f = 0; f < kNVectors; ++f)
+         vecs.emplace_back(model->MakeField<std::vector<float>>("v" + std::to_string(f)));
+      auto rvec = model->MakeField<ROOT::RVec<int>>("rvec");
+
+      auto writer = RNTupleWriter::Recreate(std::move(model), "ntpl", fileGuard.GetPath());
+      const auto &m = writer->GetModel();
+      const auto tokEvt = m.GetToken("evt");
+      const auto tokRVec = m.GetToken("rvec");
+      std::vector<ROOT::RFieldToken> tokVecs;
+      for (int f = 0; f < kNVectors; ++f)
+         tokVecs.emplace_back(m.GetToken("v" + std::to_string(f)));
+
+      std::vector<ROOT::RFieldToken> tokens;
+      for (int i = 0; i < kNEntries; ++i) {
+         *evt = i;
+         tokens.assign({tokEvt});
+         for (int f = 0; f < kNVectors; ++f) {
+            vecs[f]->assign(isFilled(i, f) ? (i + f) % 4 + 1 : 0, float(i * 100 + f));
+            if (isFilled(i, f))
+               tokens.emplace_back(tokVecs[f]);
+         }
+         rvec->clear();
+         if (isFilled(i, kNVectors + 1)) {
+            rvec->assign({i, -i});
+            tokens.emplace_back(tokRVec);
+         }
+
+         if (i % 500 == 250) {
+            // Dense fill in between sparse fills: all values, including the empty ones, are written
+            writer->Fill();
+         } else {
+            writer->FillSparse(tokens);
+         }
+         if (i % 300 == 299)
+            writer->CommitCluster();
+      }
+   }
+
+   auto reader = RNTupleReader::Open("ntpl", fileGuard.GetPath());
+   ASSERT_EQ(kNEntries, reader->GetNEntries());
+   EXPECT_GT(reader->GetDescriptor().GetNClusters(), 9u);
+   auto evt = reader->GetView<int>("evt");
+   std::vector<ROOT::RNTupleView<std::vector<float>>> vecs;
+   for (int f = 0; f < kNVectors; ++f)
+      vecs.emplace_back(reader->GetView<std::vector<float>>("v" + std::to_string(f)));
+   auto rvec = reader->GetView<ROOT::RVec<int>>("rvec");
+   for (int i = 0; i < kNEntries; ++i) {
+      EXPECT_EQ(i, evt(i));
+      for (int f = 0; f < kNVectors; ++f) {
+         const std::vector<float> expected(isFilled(i, f) ? (i + f) % 4 + 1 : 0, float(i * 100 + f));
+         EXPECT_EQ(expected, vecs[f](i)) << "entry " << i << " field " << f;
+      }
+      const auto expectedRVec = isFilled(i, kNVectors + 1) ? ROOT::RVec<int>{i, -i} : ROOT::RVec<int>{};
+      EXPECT_TRUE(ROOT::VecOps::All(expectedRVec == rvec(i)) && expectedRVec.size() == rvec(i).size()) << "entry " << i;
+   }
+}

@@ -12,6 +12,7 @@
 
 #include <ROOT/RNTupleFillContext.hxx>
 
+#include <ROOT/RColumn.hxx>
 #include <ROOT/RError.hxx>
 #include <ROOT/RFieldBase.hxx>
 #include <ROOT/RLogger.hxx>
@@ -53,8 +54,81 @@ ROOT::RNTupleFillContext::~RNTupleFillContext()
    }
 }
 
+void ROOT::RNTupleFillContext::InitSparse(ROOT::REntry &entry)
+{
+   const auto nValues = entry.fValues.size();
+   fSparseFields.resize(nValues);
+   fSparseEmptySize.assign(nValues, 0);
+   fSparseNEntries.assign(nValues, fNEntries);
+   fSparseEmptySizeTotal = 0;
+   for (std::size_t i = 0; i < nValues; ++i) {
+      // The entry values of a model refer to the model's fields. Filling needs the mutable field.
+      auto *field = const_cast<ROOT::RFieldBase *>(&entry.fValues[i].GetField());
+      fSparseFields[i] = field;
+      if (field->SupportsAppendEmpty()) {
+         // The empty value of a collection is a single index column element
+         fSparseEmptySize[i] = ROOT::RFieldBase::GetPrincipalColumnOf(*field)->GetElement()->GetPackedSize();
+         fSparseEmptySizeTotal += fSparseEmptySize[i];
+      }
+   }
+}
+
+void ROOT::RNTupleFillContext::SparseCatchUp()
+{
+   for (std::size_t i = 0; i < fSparseFields.size(); ++i) {
+      if (fSparseNEntries[i] < fNEntries) {
+         // The size of empty values was already accounted for when the entries were filled
+         fSparseFields[i]->AppendEmptyImpl(fNEntries - fSparseNEntries[i]);
+         fSparseNEntries[i] = fNEntries;
+      }
+   }
+}
+
+void ROOT::RNTupleFillContext::FillSparseNoFlush(ROOT::REntry &entry, std::span<const ROOT::RFieldToken> tokens,
+                                                 ROOT::RNTupleFillStatus &status)
+{
+   if (R__unlikely(entry.GetModelId() != fModel->GetModelId()))
+      throw RException(R__FAIL("mismatch between entry and model"));
+   if (R__unlikely(fSparseNEntries.empty()))
+      InitSparse(entry);
+
+   std::size_t bytesWritten = fSparseEmptySizeTotal;
+   for (const auto &token : tokens) {
+      entry.EnsureMatchingModel(token);
+      const auto idx = token.fIndex;
+      if (R__unlikely(idx >= fSparseFields.size()))
+         throw RException(R__FAIL("sparse filling supports only top-level fields"));
+      auto &nEntries = fSparseNEntries[idx];
+      if (R__unlikely(nEntries > fNEntries))
+         throw RException(R__FAIL("field '" + fSparseFields[idx]->GetFieldName() + "' given twice"));
+      if (nEntries < fNEntries)
+         fSparseFields[idx]->AppendEmptyImpl(fNEntries - nEntries);
+      bytesWritten += fSparseFields[idx]->Append(entry.fValues[idx].GetPtr<void>().get());
+      bytesWritten -= fSparseEmptySize[idx];
+      nEntries = fNEntries + 1;
+   }
+   fUnzippedClusterSize += bytesWritten;
+   fNEntries++;
+
+   status.fNEntriesSinceLastFlush = fNEntries - fLastFlushed;
+   status.fUnzippedClusterSize = fUnzippedClusterSize;
+   status.fLastEntrySize = bytesWritten;
+   status.fShouldFlushCluster =
+      (fUnzippedClusterSize >= fMaxUnzippedClusterSize) || (fUnzippedClusterSize >= fUnzippedClusterSizeEst);
+}
+
+std::size_t ROOT::RNTupleFillContext::FillSparse(ROOT::REntry &entry, std::span<const ROOT::RFieldToken> tokens)
+{
+   ROOT::RNTupleFillStatus status;
+   FillSparseNoFlush(entry, tokens, status);
+   if (status.ShouldFlushCluster())
+      FlushCluster();
+   return status.GetLastEntrySize();
+}
+
 void ROOT::RNTupleFillContext::FlushColumns()
 {
+   SparseCatchUp();
    for (auto &field : ROOT::Internal::GetFieldZeroOfModel(*fModel)) {
       ROOT::Internal::CallFlushColumnsOnField(field);
    }
@@ -65,6 +139,8 @@ void ROOT::RNTupleFillContext::FlushCluster()
    if (fNEntries == fLastFlushed) {
       return;
    }
+   // Collection offsets are cluster-local, so all fields need to be complete before committing the cluster
+   SparseCatchUp();
    for (auto &field : ROOT::Internal::GetFieldZeroOfModel(*fModel)) {
       ROOT::Internal::CallCommitClusterOnField(field);
    }

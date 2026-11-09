@@ -180,6 +180,18 @@ public:
    /// to ensure it comes from the writer's own model or throw an exception otherwise.
    /// \return The number of uncompressed bytes written.
    std::size_t Fill(ROOT::REntry &entry) { return fFillContext.Fill(entry); }
+   /// Fill only the given top-level fields of the default entry; all other fields get an empty value.
+   /// See RNTupleFillContext::FillSparseNoFlush().
+   std::size_t FillSparse(std::span<const ROOT::RFieldToken> tokens)
+   {
+      return fFillContext.FillSparse(fFillContext.fModel->GetDefaultEntry(), tokens);
+   }
+   /// Fill only the given top-level fields of the entry; all other fields get an empty value.
+   /// See RNTupleFillContext::FillSparseNoFlush().
+   std::size_t FillSparse(ROOT::REntry &entry, std::span<const ROOT::RFieldToken> tokens)
+   {
+      return fFillContext.FillSparse(entry, tokens);
+   }
    /// Fill an entry into this ntuple, but don't commit the cluster. The calling code must pass an RNTupleFillStatus
    /// and check RNTupleFillStatus::ShouldFlushCluster.
    void FillNoFlush(ROOT::REntry &entry, RNTupleFillStatus &status) { fFillContext.FillNoFlush(entry, status); }

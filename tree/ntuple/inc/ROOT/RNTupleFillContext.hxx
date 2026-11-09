@@ -18,11 +18,13 @@
 #include <ROOT/RError.hxx>
 #include <ROOT/RPageStorage.hxx>
 #include <ROOT/RRawPtrWriteEntry.hxx>
+#include <ROOT/RSpan.hxx>
 #include <ROOT/RNTupleFillStatus.hxx>
 #include <ROOT/RNTupleMetrics.hxx>
 #include <ROOT/RNTupleModel.hxx>
 #include <ROOT/RNTupleTypes.hxx>
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -82,15 +84,33 @@ private:
    /// Vector of currently staged clusters.
    std::vector<ROOT::Internal::RPageSink::RStagedCluster> fStagedClusters;
 
+   /// State for sparse filling (see FillSparse()); empty until the first sparse fill.
+   /// The top-level fields of the model, indexed like the entry values / field tokens
+   std::vector<ROOT::RFieldBase *> fSparseFields;
+   /// For every top-level field, the number of entries appended to it so far. Fields lagging behind fNEntries
+   /// get the missing entries appended as empty values when they are next filled or before the cluster is committed.
+   std::vector<ROOT::NTupleSize_t> fSparseNEntries;
+   /// Uncompressed size of an empty value for every top-level field, and their sum
+   std::vector<std::size_t> fSparseEmptySize;
+   std::size_t fSparseEmptySizeTotal = 0;
+
+   void InitSparse(ROOT::REntry &entry);
+   /// Append empty values to all fields lagging behind the current number of entries
+   void SparseCatchUp();
+
    template <typename Entry>
    void FillNoFlushImpl(Entry &entry, ROOT::RNTupleFillStatus &status)
    {
       if (R__unlikely(entry.GetModelId() != fModel->GetModelId()))
          throw RException(R__FAIL("mismatch between entry and model"));
 
+      if (R__unlikely(!fSparseNEntries.empty()))
+         SparseCatchUp();
       const std::size_t bytesWritten = entry.Append();
       fUnzippedClusterSize += bytesWritten;
       fNEntries++;
+      if (R__unlikely(!fSparseNEntries.empty()))
+         std::fill(fSparseNEntries.begin(), fSparseNEntries.end(), fNEntries);
 
       status.fNEntriesSinceLastFlush = fNEntries - fLastFlushed;
       status.fUnzippedClusterSize = fUnzippedClusterSize;
@@ -141,6 +161,17 @@ public:
    /// from the context's own model or throw an exception otherwise.
    /// \return The number of uncompressed bytes written.
    std::size_t Fill(ROOT::Detail::RRawPtrWriteEntry &entry) { return FillImpl(entry); }
+
+   /// Fill only the given top-level fields of the entry, but don't commit the cluster. All other top-level fields
+   /// get an empty value (e.g. an empty collection) for this entry, which is written lazily in bulk. This makes
+   /// filling cost proportional to the number of given fields rather than to the number of fields in the model.
+   /// Fields that are not given must support empty values (currently collection fields), otherwise an exception
+   /// is thrown when their empty values are written.
+   void
+   FillSparseNoFlush(ROOT::REntry &entry, std::span<const ROOT::RFieldToken> tokens, ROOT::RNTupleFillStatus &status);
+   /// Fill only the given top-level fields of the entry, see FillSparseNoFlush().
+   /// \return The (estimated) number of uncompressed bytes written.
+   std::size_t FillSparse(ROOT::REntry &entry, std::span<const ROOT::RFieldToken> tokens);
 
    /// Flush column data, preparing for CommitCluster or to reduce memory usage. This will trigger compression of pages,
    /// but not actually write to storage.
