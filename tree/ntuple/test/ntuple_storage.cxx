@@ -1093,6 +1093,62 @@ TEST(RPageStorageFile, MultiKeyBlob_Footer)
    }
 }
 
+TEST(RPageStorageFile, LargePageObjLen)
+{
+   // The uncompressed size of a page, stored as object length in the key header, must be computed without
+   // overflowing 32 bit arithmetic: 2^27 64 bit elements are 1 GiB but 2^33 bits.
+   FileRaii fileGuard("test_ntuple_storage_large_page_objlen.root");
+
+   constexpr std::uint32_t kNElementsPerPage = 1u << 27;
+   constexpr std::uint32_t kExpectedObjLen = kNElementsPerPage * sizeof(std::uint64_t);
+   constexpr std::size_t kPageSize = 16;
+   unsigned char pageBuffer[kPageSize] = {};
+
+   {
+      auto model = RNTupleModel::Create();
+      model->MakeField<std::uint64_t>("u64");
+      model->Freeze();
+
+      RNTupleWriteOptions options;
+      options.SetEnablePageChecksums(false);
+      RPageSinkFile sink("ntpl", fileGuard.GetPath(), options);
+      sink.Init(*model);
+
+      // One page through the single page path, one through the vector path
+      sink.CommitSealedPage(0, RPageStorage::RSealedPage(pageBuffer, kPageSize, kNElementsPerPage));
+      RPageStorage::SealedPageSequence_t sealedPages;
+      sealedPages.emplace_back(pageBuffer, kPageSize, kNElementsPerPage);
+      std::vector<RPageStorage::RSealedPageGroup> pageGroups;
+      pageGroups.emplace_back(0, sealedPages.cbegin(), sealedPages.cend());
+      sink.CommitSealedPageV(pageGroups);
+
+      sink.CommitCluster(2 * kNElementsPerPage);
+      sink.CommitClusterGroup();
+      sink.CommitDataset();
+      // The model's fields reference pages of the sink, so it must be destroyed first
+      model = nullptr;
+   }
+
+   RNTupleReadOptions opts;
+   opts.SetMetadataMode(RNTupleReadOptions::EMetadataMode::kEager);
+   auto reader = RNTupleReader::Open("ntpl", fileGuard.GetPath(), opts);
+   const auto &desc = reader->GetDescriptor();
+   const auto colId = desc.FindLogicalColumnId(desc.FindFieldId("u64"), 0, 0);
+   const auto &pageInfos = desc.GetActiveClusterIterable().begin()->GetPageRange(colId).GetPageInfos();
+   ASSERT_EQ(2u, pageInfos.size());
+
+   auto rawFile = RRawFile::Create(fileGuard.GetPath());
+   for (const auto &pageInfo : pageInfos) {
+      // The object length follows the 4 byte total size and the 2 byte version in the (big-endian) key header
+      const auto keyOffset = pageInfo.GetLocator().GetPosition<std::uint64_t>() - RNTupleFileWriter::kBlobKeyLen;
+      unsigned char objLenBE[4];
+      ASSERT_EQ(sizeof(objLenBE), rawFile->ReadAt(objLenBE, sizeof(objLenBE), keyOffset + 6));
+      const std::uint32_t objLen = (std::uint32_t(objLenBE[0]) << 24) | (std::uint32_t(objLenBE[1]) << 16) |
+                                   (std::uint32_t(objLenBE[2]) << 8) | std::uint32_t(objLenBE[3]);
+      EXPECT_EQ(kExpectedObjLen, objLen);
+   }
+}
+
 TEST(RPageSink, SamePageMerging)
 {
    FileRaii fileGuard("test_same_page_merging.root");

@@ -149,7 +149,7 @@ ROOT::RNTupleLocator ROOT::Internal::RPageSinkFile::CommitSealedPageImpl(ROOT::D
                                                                          const RPageStorage::RSealedPage &sealedPage)
 {
    const auto nBits = fDescriptorBuilder.GetDescriptor().GetColumnDescriptor(physicalColumnId).GetBitsOnStorage();
-   const auto bytesPacked = (nBits * sealedPage.GetNElements() + 7) / 8;
+   const auto bytesPacked = (static_cast<std::uint64_t>(nBits) * sealedPage.GetNElements() + 7) / 8;
    return WriteSealedPage(sealedPage, bytesPacked);
 }
 
@@ -203,7 +203,7 @@ ROOT::Internal::RPageSinkFile::CommitSealedPageVImpl(std::span<RPageStorage::RSe
          if (!mask[iPage])
             continue;
 
-         const auto bytesPacked = (bitsOnStorage * sealedPageIt->GetNElements() + 7) / 8;
+         const auto bytesPacked = (static_cast<std::uint64_t>(bitsOnStorage) * sealedPageIt->GetNElements() + 7) / 8;
 
          if (batch.fSize > 0 && batch.fSize + sealedPageIt->GetBufferSize() > maxKeySize) {
             /**
