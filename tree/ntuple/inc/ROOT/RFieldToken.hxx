@@ -19,6 +19,7 @@
 namespace ROOT {
 
 class REntry;
+class RNTupleFillContext;
 class RNTupleModel;
 
 namespace Detail {
@@ -36,6 +37,7 @@ It can be used for fast indexing in REntry's methods, e.g. REntry::BindValue(). 
 // clang-format on
 class RFieldToken {
    friend class REntry;
+   friend class RNTupleFillContext;
    friend class RNTupleModel;
    friend class Detail::RRawPtrWriteEntry;
 

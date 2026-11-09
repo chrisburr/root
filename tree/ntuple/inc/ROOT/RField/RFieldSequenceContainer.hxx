@@ -164,6 +164,8 @@ protected:
    std::unique_ptr<RDeleter> GetDeleter() const final;
 
    std::size_t AppendImpl(const void *from) final;
+   std::size_t AppendEmptyImpl(std::size_t n) final;
+   bool SupportsAppendEmpty() const final { return true; }
    void ReadGlobalImpl(ROOT::NTupleSize_t globalIndex, void *to) final;
    std::size_t ReadBulkImpl(const RBulkSpec &bulkSpec) final;
 
@@ -254,6 +256,8 @@ protected:
    std::unique_ptr<RDeleter> GetDeleter() const final;
 
    std::size_t AppendImpl(const void *from) final;
+   std::size_t AppendEmptyImpl(std::size_t n) final;
+   bool SupportsAppendEmpty() const final { return true; }
    void ReadGlobalImpl(ROOT::NTupleSize_t globalIndex, void *to) final;
 
    std::unique_ptr<RFieldBase> BeforeConnectPageSource(ROOT::Internal::RPageSource &pageSource) final;

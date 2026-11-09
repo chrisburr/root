@@ -1412,6 +1412,13 @@ std::size_t ROOT::RProxiedCollectionField::AppendImpl(const void *from)
    return nbytes + fPrincipalColumn->GetElement()->GetPackedSize();
 }
 
+std::size_t ROOT::RProxiedCollectionField::AppendEmptyImpl(std::size_t n)
+{
+   // An empty collection does not advance the offset
+   fPrincipalColumn->AppendRepeated(&fNWritten, n);
+   return n * fPrincipalColumn->GetElement()->GetPackedSize();
+}
+
 void ROOT::RProxiedCollectionField::ReadGlobalImpl(ROOT::NTupleSize_t globalIndex, void *to)
 {
    ROOT::NTupleSize_t nItems;

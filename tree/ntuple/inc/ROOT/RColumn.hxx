@@ -155,6 +155,28 @@ public:
       }
    }
 
+   /// Append `count` copies of the element pointed to by `from`
+   void AppendRepeated(const void *from, std::size_t count)
+   {
+      const auto elemSize = fElement->GetSize();
+      while (count > 0) {
+         std::size_t nElementsRemaining = fWritePage.GetMaxElements() - fWritePage.GetNElements();
+         if (nElementsRemaining == 0) {
+            HandleWritePageIfFull();
+            nElementsRemaining = fWritePage.GetMaxElements() - fWritePage.GetNElements();
+         }
+
+         assert(nElementsRemaining > 0);
+         auto nBatch = std::min(count, nElementsRemaining);
+
+         auto dst = static_cast<unsigned char *>(fWritePage.GrowUnchecked(nBatch));
+         for (std::size_t i = 0; i < nBatch; ++i, dst += elemSize)
+            std::memcpy(dst, from, elemSize);
+         count -= nBatch;
+         fNElements += nBatch;
+      }
+   }
+
    void Read(const ROOT::NTupleSize_t globalIndex, void *to)
    {
       if (!fReadPageRef.Get().Contains(globalIndex)) {

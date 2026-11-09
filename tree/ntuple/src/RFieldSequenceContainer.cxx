@@ -249,6 +249,13 @@ std::size_t ROOT::RRVecField::AppendImpl(const void *from)
    return nbytes + fPrincipalColumn->GetElement()->GetPackedSize();
 }
 
+std::size_t ROOT::RRVecField::AppendEmptyImpl(std::size_t n)
+{
+   // An empty collection does not advance the offset
+   fPrincipalColumn->AppendRepeated(&fNWritten, n);
+   return n * fPrincipalColumn->GetElement()->GetPackedSize();
+}
+
 unsigned char *ROOT::RRVecField::ResizeRVec(void *rvec, std::size_t nItems, std::size_t itemSize,
                                             const RFieldBase *itemField, RDeleter *itemDeleter)
 
@@ -613,6 +620,13 @@ std::size_t ROOT::RVectorField::AppendImpl(const void *from)
    fNWritten += count;
    fPrincipalColumn->Append(&fNWritten);
    return nbytes + fPrincipalColumn->GetElement()->GetPackedSize();
+}
+
+std::size_t ROOT::RVectorField::AppendEmptyImpl(std::size_t n)
+{
+   // An empty collection does not advance the offset
+   fPrincipalColumn->AppendRepeated(&fNWritten, n);
+   return n * fPrincipalColumn->GetElement()->GetPackedSize();
 }
 
 void ROOT::RVectorField::ResizeVector(void *vec, std::size_t nItems, std::size_t itemSize, const RFieldBase &itemField,

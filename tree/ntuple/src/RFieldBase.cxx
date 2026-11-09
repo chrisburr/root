@@ -620,6 +620,12 @@ std::size_t ROOT::RFieldBase::AppendImpl(const void * /* from */)
    return 0;
 }
 
+std::size_t ROOT::RFieldBase::AppendEmptyImpl(std::size_t /* n */)
+{
+   throw RException(R__FAIL("field '" + GetQualifiedFieldName() + "' of type '" + GetTypeName() +
+                            "' does not support appending empty values"));
+}
+
 void ROOT::RFieldBase::ReadGlobalImpl(ROOT::NTupleSize_t /*index*/, void * /* to */)
 {
    R__ASSERT(false);
