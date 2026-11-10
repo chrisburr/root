@@ -65,12 +65,19 @@ class RPageSinkBuf : public RPageSink {
          }
          // Safety: Insertion at the end of a deque never invalidates references
          // to existing elements.
-         return fBufferedPages.emplace_back();
+         return GetOrCreateStorage().fBufferedPages.emplace_back();
       }
       const RPageStorage::ColumnHandle_t &GetHandle() const { return fCol; }
-      bool IsEmpty() const { return fBufferedPages.empty(); }
-      bool HasSealedPagesOnly() const { return fBufferedPages.size() == fSealedPages.size(); }
-      const RPageStorage::SealedPageSequence_t &GetSealedPages() const { return fSealedPages; }
+      bool IsEmpty() const { return !fStorage || fStorage->fBufferedPages.empty(); }
+      bool HasSealedPagesOnly() const
+      {
+         return !fStorage || fStorage->fBufferedPages.size() == fStorage->fSealedPages.size();
+      }
+      const RPageStorage::SealedPageSequence_t &GetSealedPages() const
+      {
+         static const RPageStorage::SealedPageSequence_t kNoSealedPages;
+         return fStorage ? fStorage->fSealedPages : kNoSealedPages;
+      }
 
       void DropBufferedPages();
 
@@ -78,19 +85,33 @@ class RPageSinkBuf : public RPageSink {
       // to fill in data after sealing.
       RSealedPage &RegisterSealedPage()
       {
-         return fSealedPages.emplace_back();
+         return GetOrCreateStorage().fSealedPages.emplace_back();
       }
 
    private:
+      /// The page queues of a column with buffered pages. A std::deque allocates memory even when it is empty, so the
+      /// queues are only created for columns that have pages in the current cluster: for schemas with many columns
+      /// that are mostly empty, this saves O(1 kB) per column.
+      struct RStorage {
+         /// Using a deque guarantees that element iterators are never invalidated
+         /// by appends to the end of the iterator by BufferPage.
+         std::deque<RPageZipItem> fBufferedPages;
+         /// Pages that have been already sealed by a concurrent task. A vector commit can be issued if all
+         /// buffered pages have been sealed.
+         /// Note that each RSealedPage refers to the same buffer as `fBufferedPages[i].fBuf` for some value of `i`,
+         /// and thus owned by RPageZipItem
+         RPageStorage::SealedPageSequence_t fSealedPages;
+      };
+
+      RStorage &GetOrCreateStorage()
+      {
+         if (!fStorage)
+            fStorage = std::make_unique<RStorage>();
+         return *fStorage;
+      }
+
       RPageStorage::ColumnHandle_t fCol;
-      /// Using a deque guarantees that element iterators are never invalidated
-      /// by appends to the end of the iterator by BufferPage.
-      std::deque<RPageZipItem> fBufferedPages;
-      /// Pages that have been already sealed by a concurrent task. A vector commit can be issued if all
-      /// buffered pages have been sealed.
-      /// Note that each RSealedPage refers to the same buffer as `fBufferedPages[i].fBuf` for some value of `i`, and
-      /// thus owned by RPageZipItem
-      RPageStorage::SealedPageSequence_t fSealedPages;
+      std::unique_ptr<RStorage> fStorage;
    };
 
    /// I/O performance counters that get registered in fMetrics
@@ -105,9 +126,6 @@ class RPageSinkBuf : public RPageSink {
    std::unique_ptr<RCounters> fCounters;
    /// The inner sink, responsible for actually performing I/O.
    std::unique_ptr<RPageSink> fInnerSink;
-   /// The buffered page sink maintains a copy of the RNTupleModel for the inner sink.
-   /// For the unbuffered case, the RNTupleModel is instead managed by a RNTupleWriter.
-   std::unique_ptr<ROOT::RNTupleModel> fInnerModel;
    /// The sum of uncompressed bytes in buffered pages. Used to heuristically reduce the memory usage.
    std::atomic<std::size_t> fBufferedUncompressed = 0;
    /// Vector of buffered column pages. Indexed by column id.

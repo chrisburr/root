@@ -29,12 +29,25 @@ using ROOT::Experimental::Detail::RNTuplePlainCounter;
 using ROOT::Experimental::Detail::RNTuplePlainTimer;
 using ROOT::Experimental::Detail::RNTupleTickCounter;
 
+namespace {
+/// Number of fields in the given subtrees, including the subtree roots
+std::size_t CountFields(const std::vector<ROOT::RFieldBase *> &fields)
+{
+   std::size_t n = 0;
+   for (const auto *f : fields) {
+      n++;
+      for ([[maybe_unused]] const auto &descendant : *f)
+         n++;
+   }
+   return n;
+}
+} // anonymous namespace
+
 void ROOT::Internal::RPageSinkBuf::RColumnBuf::DropBufferedPages()
 {
-   fBufferedPages.clear();
    // Each RSealedPage points to the same region as `fBuf` for some element in `fBufferedPages`; thus, no further
    // clean-up is required
-   fSealedPages.clear();
+   fStorage.reset();
 }
 
 ROOT::Internal::RPageSinkBuf::RPageSinkBuf(std::unique_ptr<RPageSink> inner)
@@ -93,54 +106,52 @@ const ROOT::RNTupleDescriptor &ROOT::Internal::RPageSinkBuf::GetDescriptor() con
 void ROOT::Internal::RPageSinkBuf::InitImpl(ROOT::RNTupleModel &model)
 {
    ConnectFields(GetFieldZeroOfModel(model).GetMutableSubfields(), 0U);
+   // The inner sink numbers the projected fields after the regular ones; keep the field ids in step with it so that
+   // the model clones handed to the inner sink carry the same ids as its descriptor
+   fNFields += CountFields(GetProjectedFieldsOfModel(model).GetFieldZero().GetMutableSubfields());
 
-   fInnerModel = model.Clone();
-   fInnerSink->Init(*fInnerModel);
+   // The inner sink only needs the fields to fill its descriptor; the clone is released afterwards, see UpdateSchema()
+   auto innerModel = model.Clone();
+   // Callbacks registered by the clone's fields would outlive them; the fields of `model` register their own with
+   // this sink, which forwards them to the inner sink.
+   const auto nCallbacks = fInnerSink->GetNOnCommitDatasetCallbacks();
+   fInnerSink->Init(*innerModel);
+   fInnerSink->TruncateOnCommitDatasetCallbacks(nCallbacks);
 }
 
 void ROOT::Internal::RPageSinkBuf::UpdateSchema(const ROOT::Internal::RNTupleModelChangeset &changeset,
                                                 ROOT::NTupleSize_t firstEntry)
 {
    ConnectFields(changeset.fAddedFields, firstEntry);
+   fNFields += CountFields(changeset.fAddedProjectedFields);
 
-   // The buffered page sink maintains a copy of the RNTupleModel for the inner sink; replicate the changes there
-   // TODO(jalopezg): we should be able, in general, to simplify the buffered sink.
-   auto cloneAddField = [&](const ROOT::RFieldBase *field) {
-      auto cloned = field->Clone(field->GetFieldName());
-      auto p = &(*cloned);
-
-      auto parent = field->GetParent();
-      assert(parent);
-      if (typeid(*parent) != typeid(RFieldZero)) {
-         auto &innerParent = fInnerModel->GetMutableField(parent->GetQualifiedFieldName());
-         assert(dynamic_cast<RRecordField *>(&innerParent));
-         AddItemToRecord(static_cast<RRecordField &>(innerParent), std::move(cloned));
-      } else {
-         fInnerModel->AddField(std::move(cloned));
+   // The inner sink needs fields to connect, but it only uses them to register the new fields and columns in its
+   // descriptor. Instead of keeping a copy of the model for the inner sink (which doubles the memory of the fields
+   // and columns), clone the model for the duration of the schema update and look up the added fields in the clone.
+   // The clone keeps the on-disk ids of the fields that are already connected.
+   auto innerModel = changeset.fModel.Clone();
+   innerModel->Unfreeze();
+   // The on-disk ids of the zero fields are set by the inner sink's Init() on its own model
+   GetFieldZeroOfModel(*innerModel).SetOnDiskId(0);
+   GetProjectedFieldsOfModel(*innerModel).GetFieldZero().SetOnDiskId(0);
+   RNTupleModelChangeset innerChangeset{*innerModel};
+   for (auto *field : changeset.fAddedFields)
+      innerChangeset.fAddedFields.emplace_back(&innerModel->GetMutableField(field->GetQualifiedFieldName()));
+   if (!changeset.fAddedProjectedFields.empty()) {
+      auto &innerProjectedZero = GetProjectedFieldsOfModel(*innerModel).GetFieldZero();
+      for (auto *field : changeset.fAddedProjectedFields) {
+         ROOT::RFieldBase *match = nullptr;
+         for (auto *f : innerProjectedZero.GetMutableSubfields()) {
+            if (f->GetFieldName() == field->GetFieldName())
+               match = f;
+         }
+         R__ASSERT(match);
+         innerChangeset.fAddedProjectedFields.emplace_back(match);
       }
-      return p;
-   };
-   auto cloneAddProjectedField = [&](ROOT::RFieldBase *field) {
-      auto cloned = field->Clone(field->GetFieldName());
-      auto p = &(*cloned);
-      auto &projectedFields = GetProjectedFieldsOfModel(changeset.fModel);
-      RProjectedFields::FieldMap_t fieldMap;
-      fieldMap[p] = &fInnerModel->GetConstField(projectedFields.GetSourceField(field)->GetQualifiedFieldName());
-      auto targetIt = cloned->begin();
-      for (auto &f : *field)
-         fieldMap[&(*targetIt++)] =
-            &fInnerModel->GetConstField(projectedFields.GetSourceField(&f)->GetQualifiedFieldName());
-      GetProjectedFieldsOfModel(*fInnerModel).Add(std::move(cloned), fieldMap);
-      return p;
-   };
-   RNTupleModelChangeset innerChangeset{*fInnerModel};
-   fInnerModel->Unfreeze();
-   std::transform(changeset.fAddedFields.cbegin(), changeset.fAddedFields.cend(),
-                  std::back_inserter(innerChangeset.fAddedFields), cloneAddField);
-   std::transform(changeset.fAddedProjectedFields.cbegin(), changeset.fAddedProjectedFields.cend(),
-                  std::back_inserter(innerChangeset.fAddedProjectedFields), cloneAddProjectedField);
-   fInnerModel->Freeze();
+   }
+   const auto nCallbacks = fInnerSink->GetNOnCommitDatasetCallbacks();
    fInnerSink->UpdateSchema(innerChangeset, firstEntry);
+   fInnerSink->TruncateOnCommitDatasetCallbacks(nCallbacks);
 }
 
 void ROOT::Internal::RPageSinkBuf::UpdateExtraTypeInfo(const ROOT::RExtraTypeInfoDescriptor &extraTypeInfo)

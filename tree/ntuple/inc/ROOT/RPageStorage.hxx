@@ -413,6 +413,11 @@ public:
 
    /// The registered callback is executed at the beginning of CommitDataset();
    void RegisterOnCommitDatasetCallback(const Callback_t &cb) { fOnDatasetCommitCallbacks.emplace_back(cb); }
+   /// Number of callbacks registered with RegisterOnCommitDatasetCallback()
+   std::size_t GetNOnCommitDatasetCallbacks() const { return fOnDatasetCommitCallbacks.size(); }
+   /// Remove the callbacks registered after the first `n`. Used by a wrapping sink when the fields that registered
+   /// them are released before the data set is committed.
+   void TruncateOnCommitDatasetCallbacks(std::size_t n) { fOnDatasetCommitCallbacks.resize(n); }
    /// Run the registered callbacks and finalize the current cluster and the entrire data set.
    RNTupleLink CommitDataset();
 
