@@ -92,7 +92,11 @@ void ROOT::RNTupleFillContext::FillSparseNoFlush(ROOT::REntry &entry, std::span<
    if (R__unlikely(fSparseNEntries.empty()))
       InitSparse(entry);
 
+   // Empty values of the fields that are not given are written in bulk later (SparseCatchUp()). They are reported as
+   // written, but they do not count towards the cluster size: they compress to almost nothing, and counting them
+   // would close clusters early for wide models, making pages small and compression worse.
    std::size_t bytesWritten = fSparseEmptySizeTotal;
+   std::size_t bytesCounted = 0;
    for (const auto &token : tokens) {
       entry.EnsureMatchingModel(token);
       const auto idx = token.fIndex;
@@ -103,11 +107,13 @@ void ROOT::RNTupleFillContext::FillSparseNoFlush(ROOT::REntry &entry, std::span<
          throw RException(R__FAIL("field '" + fSparseFields[idx]->GetFieldName() + "' given twice"));
       if (nEntries < fNEntries)
          fSparseFields[idx]->AppendEmptyImpl(fNEntries - nEntries);
-      bytesWritten += fSparseFields[idx]->Append(entry.fValues[idx].GetPtr<void>().get());
+      const auto nbytes = fSparseFields[idx]->Append(entry.fValues[idx].GetPtr<void>().get());
+      bytesWritten += nbytes;
       bytesWritten -= fSparseEmptySize[idx];
+      bytesCounted += nbytes;
       nEntries = fNEntries + 1;
    }
-   fUnzippedClusterSize += bytesWritten;
+   fUnzippedClusterSize += bytesCounted;
    fNEntries++;
 
    status.fNEntriesSinceLastFlush = fNEntries - fLastFlushed;
