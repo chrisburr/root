@@ -932,7 +932,8 @@ ROOT::Internal::RClusterDescriptorBuilder::CommitSuppressedColumnRanges(const RN
 }
 
 ROOT::Internal::RClusterDescriptorBuilder &
-ROOT::Internal::RClusterDescriptorBuilder::AddExtendedColumnRanges(const RNTupleDescriptor &desc)
+ROOT::Internal::RClusterDescriptorBuilder::AddExtendedColumnRanges(const RNTupleDescriptor &desc,
+                                                                   const std::vector<bool> *columnFilter)
 {
    /// Carries out a depth-first traversal of a field subtree rooted at `rootFieldId`.  For each field, `visitField` is
    /// called passing the field ID and the number of overall repetitions, taking into account the repetitions of each
@@ -958,6 +959,8 @@ ROOT::Internal::RClusterDescriptorBuilder::AddExtendedColumnRanges(const RNTuple
          [&](ROOT::DescriptorId_t fieldId, std::uint64_t nRepetitions) {
             for (const auto &c : desc.GetColumnIterable(fieldId)) {
                const ROOT::DescriptorId_t physicalId = c.GetPhysicalId();
+               if (columnFilter && (physicalId >= columnFilter->size() || !(*columnFilter)[physicalId]))
+                  continue;
                auto &columnRange = fCluster.fColumnRanges[physicalId];
 
                // Initialize a RColumnRange for `physicalId` if it was not there. Columns that were created during model

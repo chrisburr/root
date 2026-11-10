@@ -59,7 +59,7 @@ Deserialization errors throw exceptions. Only when indicated or when passed as a
 class RNTupleSerializer {
    static RResult<std::vector<ROOT::Internal::RClusterDescriptorBuilder>>
    DeserializePageListRaw(const void *buffer, std::uint64_t bufSize, ROOT::DescriptorId_t clusterGroupId,
-                          const RNTupleDescriptor &desc);
+                          const RNTupleDescriptor &desc, const std::vector<bool> *columnFilter);
 
 public:
    static constexpr std::uint16_t kEnvelopeTypeHeader = 0x01;
@@ -302,9 +302,12 @@ public:
       kForReading,
    };
    // The clusters vector must be initialized with the cluster summaries corresponding to the page list
+   // If `columnFilter` is given, only the columns whose physical ID is set in it get column and page ranges; the
+   // page list entries of all other columns are skipped.
    static RResult<void> DeserializePageList(const void *buffer, std::uint64_t bufSize,
                                             ROOT::DescriptorId_t clusterGroupId, RNTupleDescriptor &desc,
-                                            EDescriptorDeserializeMode mode);
+                                            EDescriptorDeserializeMode mode,
+                                            const std::vector<bool> *columnFilter = nullptr);
 
    // Helper functions to (de-)serialize the streamer info type extra information
    static std::string SerializeStreamerInfos(const StreamerInfoMap_t &infos);

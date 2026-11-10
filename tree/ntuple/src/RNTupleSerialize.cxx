@@ -2169,7 +2169,8 @@ ROOT::RResult<std::uint32_t> ROOT::Internal::RNTupleSerializer::DeserializeAttri
 ROOT::RResult<std::vector<ROOT::Internal::RClusterDescriptorBuilder>>
 ROOT::Internal::RNTupleSerializer::DeserializePageListRaw(const void *buffer, std::uint64_t bufSize,
                                                           ROOT::DescriptorId_t clusterGroupId,
-                                                          const ROOT::RNTupleDescriptor &desc)
+                                                          const ROOT::RNTupleDescriptor &desc,
+                                                          const std::vector<bool> *columnFilter)
 {
    auto base = reinterpret_cast<const unsigned char *>(buffer);
    auto bytes = base;
@@ -2256,6 +2257,11 @@ ROOT::Internal::RNTupleSerializer::DeserializePageListRaw(const void *buffer, st
             return R__FORWARD_ERROR(res);
          }
 
+         if (columnFilter && (j >= columnFilter->size() || !(*columnFilter)[j])) {
+            bytes = innerFrame + innerFrameSize;
+            continue;
+         }
+
          ROOT::RClusterDescriptor::RPageRange pageRange;
          pageRange.SetPhysicalColumnId(j);
          for (std::uint32_t k = 0; k < nPages; ++k) {
@@ -2305,9 +2311,10 @@ ROOT::Internal::RNTupleSerializer::DeserializePageListRaw(const void *buffer, st
 ROOT::RResult<void> ROOT::Internal::RNTupleSerializer::DeserializePageList(const void *buffer, std::uint64_t bufSize,
                                                                            ROOT::DescriptorId_t clusterGroupId,
                                                                            ROOT::RNTupleDescriptor &desc,
-                                                                           EDescriptorDeserializeMode mode)
+                                                                           EDescriptorDeserializeMode mode,
+                                                       const std::vector<bool> *columnFilter)
 {
-   auto clusterBuildersRes = RNTupleSerializer::DeserializePageListRaw(buffer, bufSize, clusterGroupId, desc);
+   auto clusterBuildersRes = RNTupleSerializer::DeserializePageListRaw(buffer, bufSize, clusterGroupId, desc, columnFilter);
    if (!clusterBuildersRes)
       return R__FORWARD_ERROR(clusterBuildersRes);
 
@@ -2318,14 +2325,27 @@ ROOT::RResult<void> ROOT::Internal::RNTupleSerializer::DeserializePageList(const
 
    // Conditionally fixup the clusters depending on the attach purpose
    switch (mode) {
-   case EDescriptorDeserializeMode::kForReading:
+   case EDescriptorDeserializeMode::kForReading: {
+      // Synthesizing extended column ranges visits every field of the schema for every cluster; skip it if there are
+      // neither header extension columns nor deferred columns
+      bool needExtendedColumnRanges = false;
+      if (desc.GetHeaderExtension()) {
+         needExtendedColumnRanges = desc.GetHeaderExtension()->GetNLogicalColumns() > 0;
+         for (const auto &c : desc.GetColumnIterable()) {
+            if (needExtendedColumnRanges)
+               break;
+            needExtendedColumnRanges = c.IsDeferredColumn();
+         }
+      }
       for (auto &builder : clusterBuilders) {
          if (auto res = builder.CommitSuppressedColumnRanges(desc); !res)
             return R__FORWARD_RESULT(res);
-         builder.AddExtendedColumnRanges(desc);
+         if (needExtendedColumnRanges)
+            builder.AddExtendedColumnRanges(desc, columnFilter);
          clusters.emplace_back(builder.MoveDescriptor().Unwrap());
       }
       break;
+   }
    case EDescriptorDeserializeMode::kForWriting:
       for (auto &builder : clusterBuilders) {
          if (auto res = builder.CommitSuppressedColumnRanges(desc); !res)

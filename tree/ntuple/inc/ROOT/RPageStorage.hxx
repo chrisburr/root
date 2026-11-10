@@ -839,6 +839,17 @@ private:
    /// page list budget in the read options. Pinned cluster groups can cause overspending of the budget.
    /// We except a small number of loaded cluster groups, thus we accept O(n) complexity to edit this list.
    std::deque<ROOT::DescriptorId_t> fClusterGroupAccessSequence;
+   /// Cluster groups whose details were loaded only for the columns that were active at the time. They are dropped
+   /// when another column becomes active, and reloaded on demand.
+   std::unordered_set<ROOT::DescriptorId_t> fColumnFilteredClusterGroups;
+   /// Set by AddColumn() when a column becomes active. AddColumn() may be called while a descriptor guard is held,
+   /// so the filtered cluster groups are dropped later, by EnsureClusterDetails().
+   std::atomic<bool> fColumnFilterStale{false};
+   /// The physical columns whose page list entries are needed: the active columns and the other columns of their
+   /// fields (for suppressed column representations)
+   std::vector<bool> MakeActiveColumnFilter(const ROOT::RNTupleDescriptor &desc) const;
+   /// Drops the details of cluster groups loaded with a column filter. Must hold an exclusive descriptor lock.
+   void DropColumnFilteredClusterGroups(const RExclDescriptorGuard &exclGuard);
 
    /// Ensures that fDescriptor has cluster details loaded for the given cluster group ID. This method is expected
    /// to be called while holding the lock passed by descGuard. The returned descriptor guard is either the
@@ -854,7 +865,8 @@ private:
 
    // Populate the cluster details of the given cluster group. Must hold an exclusive descriptor lock when calling.
    // No-op if the cluster details are already present.
-   void LoadPageList(DescriptorId_t clusterGroupId, const RExclDescriptorGuard &exclGuard);
+   // If `filterColumns` is true, only the page list entries of the active columns are deserialized.
+   void LoadPageList(DescriptorId_t clusterGroupId, const RExclDescriptorGuard &exclGuard, bool filterColumns = false);
    // Common treatment of zero pages in LoadPageFromSummary()
    ROOT::Internal::RPageRef LoadZeroPage(ColumnHandle_t columnHandle, const RPageSummary &pageSummary);
    /// PROTOTYPE: synthesize a page from a constant-page locator

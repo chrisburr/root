@@ -1715,7 +1715,9 @@ public:
    /// type for the synthesized page ranges is `kTypePageZero`.  All the page sources must be able to populate the
    /// 'zero' page from such locator. Any call to CommitColumnRange() and CommitSuppressedColumnRanges()
    /// should happen before calling this function.
-   RClusterDescriptorBuilder &AddExtendedColumnRanges(const RNTupleDescriptor &desc);
+   /// Columns not set in `columnFilter` (if given) are left out.
+   RClusterDescriptorBuilder &
+   AddExtendedColumnRanges(const RNTupleDescriptor &desc, const std::vector<bool> *columnFilter = nullptr);
 
    const RClusterDescriptor::RColumnRange &GetColumnRange(ROOT::DescriptorId_t physicalId)
    {

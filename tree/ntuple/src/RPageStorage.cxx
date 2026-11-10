@@ -210,7 +210,11 @@ ROOT::Internal::RPageSource::AddColumn(ROOT::DescriptorId_t fieldId, RColumn &co
    auto physicalId =
       GetSharedDescriptorGuard()->FindPhysicalColumnId(fieldId, column.GetIndex(), column.GetRepresentationIndex());
    R__ASSERT(physicalId != ROOT::kInvalidDescriptorId);
+   const bool isNewColumn = !fActivePhysicalColumns.HasColumnInfos(physicalId);
    fActivePhysicalColumns.Insert(physicalId, column.GetElement()->GetIdentifier());
+   // Cluster groups loaded so far may lack the page list entries of the new column
+   if (isNewColumn)
+      fColumnFilterStale = true;
    return ColumnHandle_t{physicalId, &column};
 }
 
@@ -262,9 +266,37 @@ void ROOT::Internal::RPageSource::Attach(RNTupleSerializer::EDescriptorDeseriali
    fIsAttached = true;
 }
 
+std::vector<bool> ROOT::Internal::RPageSource::MakeActiveColumnFilter(const ROOT::RNTupleDescriptor &desc) const
+{
+   std::vector<bool> filter(desc.GetNPhysicalColumns(), false);
+   for (const auto physicalId : fActivePhysicalColumns.ToColumnSet()) {
+      const auto &fieldDesc = desc.GetFieldDescriptor(desc.GetColumnDescriptor(physicalId).GetFieldId());
+      for (const auto logicalId : fieldDesc.GetLogicalColumnIds()) {
+         const auto otherPhysicalId = desc.GetColumnDescriptor(logicalId).GetPhysicalId();
+         if (otherPhysicalId < filter.size())
+            filter[otherPhysicalId] = true;
+      }
+   }
+   return filter;
+}
+
+void ROOT::Internal::RPageSource::DropColumnFilteredClusterGroups(const RExclDescriptorGuard &exclGuard)
+{
+   for (const auto cgId : fColumnFilteredClusterGroups) {
+      if (!exclGuard->GetClusterGroupDescriptor(cgId).HasClusterDetails())
+         continue;
+      exclGuard->DropClusterGroupDetails(cgId);
+      auto itr = std::find(fClusterGroupAccessSequence.begin(), fClusterGroupAccessSequence.end(), cgId);
+      if (itr != fClusterGroupAccessSequence.end())
+         fClusterGroupAccessSequence.erase(itr);
+   }
+   fColumnFilteredClusterGroups.clear();
+}
+
 void ROOT::Internal::RPageSource::LoadAllPageLists()
 {
    auto descGuard = GetExclDescriptorGuard();
+   DropColumnFilteredClusterGroups(descGuard);
 
    for (const auto &cgDesc : descGuard->GetClusterGroupIterable()) {
       LoadPageList(cgDesc.GetId(), descGuard);
@@ -274,7 +306,8 @@ void ROOT::Internal::RPageSource::LoadAllPageLists()
    fClusterGroupAccessSequence.clear();
 }
 
-void ROOT::Internal::RPageSource::LoadPageList(DescriptorId_t clusterGroupId, const RExclDescriptorGuard &exclGuard)
+void ROOT::Internal::RPageSource::LoadPageList(DescriptorId_t clusterGroupId, const RExclDescriptorGuard &exclGuard,
+                                               bool filterColumns)
 {
    const auto &cgDesc = exclGuard->GetClusterGroupDescriptor(clusterGroupId);
    if (cgDesc.HasClusterDetails())
@@ -286,8 +319,16 @@ void ROOT::Internal::RPageSource::LoadPageList(DescriptorId_t clusterGroupId, co
    LoadPageListImpl(cgDesc.GetPageListLocator(), zipBuffer);
    RNTupleDecompressor::Unzip(zipBuffer, cgDesc.GetPageListLocator().GetNBytesOnStorage(), cgDesc.GetPageListLength(),
                               buffer.get());
-   RNTupleSerializer::DeserializePageList(buffer.get(), cgDesc.GetPageListLength(), cgDesc.GetId(), *exclGuard,
-                                          fDeserializationMode);
+   // Without active columns (e.g. a page source used directly to copy pages), all columns are loaded
+   if (filterColumns && !fActivePhysicalColumns.ToColumnSet().empty()) {
+      const auto filter = MakeActiveColumnFilter(*exclGuard);
+      RNTupleSerializer::DeserializePageList(buffer.get(), cgDesc.GetPageListLength(), cgDesc.GetId(), *exclGuard,
+                                             fDeserializationMode, &filter);
+      fColumnFilteredClusterGroups.insert(clusterGroupId);
+   } else {
+      RNTupleSerializer::DeserializePageList(buffer.get(), cgDesc.GetPageListLength(), cgDesc.GetId(), *exclGuard,
+                                             fDeserializationMode);
+   }
 }
 
 std::unique_ptr<ROOT::Internal::RPageSource> ROOT::Internal::RPageSource::Clone() const
@@ -299,6 +340,9 @@ std::unique_ptr<ROOT::Internal::RPageSource> ROOT::Internal::RPageSource::Clone(
       clone->fIsAttached = true;
       clone->fDeserializationMode = fDeserializationMode;
       clone->fCumulativeClusterCounts = fCumulativeClusterCounts;
+      // The clone has no active columns yet; its first column drops the filtered cluster group details
+      clone->fColumnFilteredClusterGroups = fColumnFilteredClusterGroups;
+      clone->fColumnFilterStale = true;
    }
    return clone;
 }
@@ -309,6 +353,13 @@ ROOT::Internal::RPageSource::EnsureClusterDetails(DescriptorId_t cgId, RAnyDescr
    assert(descGuard.IsValid());
    if (cgId == kInvalidDescriptorId)
       return descGuard;
+
+   if (fColumnFilterStale.exchange(false)) {
+      descGuard.Release();
+      auto exclGuard = GetExclDescriptorGuard();
+      DropColumnFilteredClusterGroups(exclGuard);
+      descGuard = std::move(exclGuard);
+   }
 
    // After LoadAllPages(), itrSeq == fClusterGroupAccessSequence.begin() == fClusterGroupAccessSequence.end()
    auto itrSeq = std::find(fClusterGroupAccessSequence.begin(), fClusterGroupAccessSequence.end(), cgId);
@@ -360,7 +411,8 @@ ROOT::Internal::RPageSource::EnsureClusterDetails(DescriptorId_t cgId, RAnyDescr
    }
    fClusterGroupAccessSequence.push_front(cgId);
 
-   LoadPageList(cgId, exclGuard);
+   // On-demand loading only needs the page list entries of the columns being read
+   LoadPageList(cgId, exclGuard, true /* filterColumns */);
 
    return exclGuard;
 }
