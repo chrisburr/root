@@ -9,3 +9,7 @@ ROOT_ADD_GTEST(geomTests
   test_material_units.cxx
   test_boolean_extrusion.cxx
   LIBRARIES Geom)
+
+ROOT_ADD_GTEST(count_levels
+  test_count_levels.cxx
+  LIBRARIES Geom)
